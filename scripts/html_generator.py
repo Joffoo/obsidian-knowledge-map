@@ -48,7 +48,7 @@ def generate_immersive_html(output_dir, vault_name, themes, style='shanshui'):
     # 1. Base Figure
     fig = go.Figure()
 
-    # 2. Immersive Terrain (80 layers) - Trace 0
+    # 2. Immersive Terrain (45 layers) - Trace 0
     x_range = np.linspace(0, 1, Z.shape[1])
     y_range = np.linspace(0, 1, Z.shape[0])
     fig.add_trace(go.Contour(
@@ -57,7 +57,7 @@ def generate_immersive_html(output_dir, vault_name, themes, style='shanshui'):
         showscale=False,
         contours=dict(coloring='heatmap', showlines=True),
         line=dict(width=0.4, color=line_color),
-        ncontours=80,
+        ncontours=45,
         hoverinfo='skip'
     ))
 
@@ -394,68 +394,79 @@ def generate_immersive_html(output_dir, vault_name, themes, style='shanshui'):
                 const hoverText = isDark ? '#FFFFFF' : theme.ink_color;
                 const hoverBorder = isDark ? theme.accent_color : (theme.secondary_color || theme.ink_color);
 
-                Plotly.relayout(plotEl, {{
-                    paper_bgcolor: theme.bg_color,
-                    plot_bgcolor: theme.bg_color,
-                    'legend.font.color': theme.ink_color,
-                    'legend.font.family': theme.font_family_web,
-                    'legend.bgcolor': legendBg,
-                    'legend.bordercolor': lineColor,
-                    'hoverlabel.bgcolor': hoverBg,
-                    'hoverlabel.bordercolor': hoverBorder,
-                    'hoverlabel.font.color': hoverText,
-                    'hoverlabel.font.family': theme.font_family_web
-                }});
+                // Atomic in-memory updates
+                // 1. Update Layout
+                plotEl.layout.paper_bgcolor = theme.bg_color;
+                plotEl.layout.plot_bgcolor = theme.bg_color;
+                if (plotEl.layout.legend) {{
+                    plotEl.layout.legend.bgcolor = legendBg;
+                    plotEl.layout.legend.bordercolor = lineColor;
+                    if (plotEl.layout.legend.font) {{
+                        plotEl.layout.legend.font.color = theme.ink_color;
+                        plotEl.layout.legend.font.family = theme.font_family_web;
+                    }}
+                }}
+                if (plotEl.layout.hoverlabel) {{
+                    plotEl.layout.hoverlabel.bgcolor = hoverBg;
+                    plotEl.layout.hoverlabel.bordercolor = hoverBorder;
+                    if (plotEl.layout.hoverlabel.font) {{
+                        plotEl.layout.hoverlabel.font.color = hoverText;
+                        plotEl.layout.hoverlabel.font.family = theme.font_family_web;
+                    }}
+                }}
 
-                // Restyle Trace 0 (Contour)
-                Plotly.restyle(plotEl, {{
-                    colorscale: [theme.plotly_colorscale],
-                    'line.color': lineColor
-                }}, [0]);
+                // 2. Update Trace 0 (Contour)
+                if (plotEl.data[0]) {{
+                    plotEl.data[0].colorscale = theme.plotly_colorscale;
+                    plotEl.data[0].line = {{ width: 0.4, color: lineColor }};
+                }}
 
-                // Restyle Traces 1 .. UNIQUE_FOLDERS_COUNT (Folder Scatters)
+                // 3. Update Traces 1 .. UNIQUE_FOLDERS_COUNT (Folder Scatters)
                 const edgeColor = theme.scatter_edge_color || 'none';
                 const markerLine = (edgeColor === 'none') ? {{ width: 0 }} : {{ width: 0.6, color: edgeColor }};
                 
                 for (let i = 0; i < UNIQUE_FOLDERS_COUNT; i++) {{
                     const traceIdx = 1 + i;
-                    const color = theme.scatter_palette[i % theme.scatter_palette.length];
-                    Plotly.restyle(plotEl, {{
-                        'marker.color': color,
-                        'marker.line': markerLine
-                    }}, [traceIdx]);
+                    if (plotEl.data[traceIdx] && plotEl.data[traceIdx].marker) {{
+                        const color = theme.scatter_palette[i % theme.scatter_palette.length];
+                        plotEl.data[traceIdx].marker.color = color;
+                        plotEl.data[traceIdx].marker.line = markerLine;
+                    }}
                 }}
 
-                // Restyle Peaks Annotations
+                // 4. Update Peaks Annotations
                 const markers = theme.peak_markers || ['I', 'II', 'III', 'IV', 'V'];
                 const badgeType = theme.peak_badge_type || 'circle';
                 const peakStartIdx = 1 + UNIQUE_FOLDERS_COUNT;
 
                 for (let i = 0; i < PEAKS_DATA.length; i++) {{
                     const traceIdx = peakStartIdx + i;
-                    const marker = markers[i % markers.length];
-                    const t = THEMES_LABELS[i] || `PEAK ${{i+1}}`;
-                    let labelHtml = '';
+                    if (plotEl.data[traceIdx]) {{
+                        const marker = markers[i % markers.length];
+                        const t = THEMES_LABELS[i] || `PEAK ${{i+1}}`;
+                        let labelHtml = '';
 
-                    if (badgeType === 'stamp') {{
-                        labelHtml = `<span class='stamp-box'>${{marker}}</span>&nbsp;<span style='color:${{theme.ink_color}}; font-weight:600; letter-spacing:2px;'>${{t}}</span>`;
-                    }} else if (badgeType === 'crosshair') {{
-                        labelHtml = `<span style='color:${{theme.accent_color}}; font-family:monospace; border:1px solid ${{theme.accent_color}}; padding:1px 4px; font-size:10px;'>${{marker}}</span>&nbsp;<span style='color:${{theme.ink_color}}; letter-spacing:1px;'>${{t}}</span>`;
-                    }} else if (badgeType === 'star') {{
-                        labelHtml = `<span style='color:${{theme.accent_color}}; text-shadow:0 0 8px ${{theme.accent_color}}; font-weight:bold;'>✦ ${{marker}}</span>&nbsp;<span style='color:${{theme.ink_color}}; letter-spacing:2px;'>${{t}}</span>`;
-                    }} else if (badgeType === 'swiss_box') {{
-                        labelHtml = `<span style='background:${{theme.accent_color}}; color:#fff; padding:1px 5px; font-weight:bold; font-size:10px; margin-right:4px;'>${{marker}}</span><span style='color:${{theme.ink_color}}; font-weight:bold; letter-spacing:1px;'>${{t.toUpperCase()}}</span>`;
-                    }} else if (badgeType === 'zen_circle') {{
-                        labelHtml = `<span style='border:1px solid ${{theme.secondary_color}}; border-radius:50%; padding:0 5px; color:${{theme.secondary_color}}; font-size:10px;'>${{marker}}</span>&nbsp;<span style='color:${{theme.ink_color}}; letter-spacing:2px;'>${{t}}</span>`;
-                    }} else {{
-                        labelHtml = `<span style='color:${{theme.secondary_color}}; letter-spacing:3px; font-weight:bold;'>[${{marker}}] ${{t.toUpperCase()}}</span>`;
+                        if (badgeType === 'stamp') {{
+                            labelHtml = `<span class='stamp-box'>${{marker}}</span>&nbsp;<span style='color:${{theme.ink_color}}; font-weight:600; letter-spacing:2px;'>${{t}}</span>`;
+                        }} else if (badgeType === 'crosshair') {{
+                            labelHtml = `<span style='color:${{theme.accent_color}}; font-family:monospace; border:1px solid ${{theme.accent_color}}; padding:1px 4px; font-size:10px;'>${{marker}}</span>&nbsp;<span style='color:${{theme.ink_color}}; letter-spacing:1px;'>${{t}}</span>`;
+                        }} else if (badgeType === 'star') {{
+                            labelHtml = `<span style='color:${{theme.accent_color}}; text-shadow:0 0 8px ${{theme.accent_color}}; font-weight:bold;'>✦ ${{marker}}</span>&nbsp;<span style='color:${{theme.ink_color}}; letter-spacing:2px;'>${{t}}</span>`;
+                        }} else if (badgeType === 'swiss_box') {{
+                            labelHtml = `<span style='background:${{theme.accent_color}}; color:#fff; padding:1px 5px; font-weight:bold; font-size:10px; margin-right:4px;'>${{marker}}</span><span style='color:${{theme.ink_color}}; font-weight:bold; letter-spacing:1px;'>${{t.toUpperCase()}}</span>`;
+                        }} else if (badgeType === 'zen_circle') {{
+                            labelHtml = `<span style='border:1px solid ${{theme.secondary_color}}; border-radius:50%; padding:0 5px; color:${{theme.secondary_color}}; font-size:10px;'>${{marker}}</span>&nbsp;<span style='color:${{theme.ink_color}}; letter-spacing:2px;'>${{t}}</span>`;
+                        }} else {{
+                            labelHtml = `<span style='color:${{theme.secondary_color}}; letter-spacing:3px; font-weight:bold;'>[${{marker}}] ${{t.toUpperCase()}}</span>`;
+                        }}
+
+                        const fullText = `<span style='font-family:${{theme.font_family_web}};'>${{labelHtml}}</span>`;
+                        plotEl.data[traceIdx].text = [fullText];
                     }}
-
-                    const fullText = `<span style='font-family:${{theme.font_family_web}};'>${{labelHtml}}</span>`;
-                    Plotly.restyle(plotEl, {{
-                        text: fullText
-                    }}, [traceIdx]);
                 }}
+
+                // 5. Single atomic render transaction via Plotly.react (replaces 14+ sequential redraws)
+                Plotly.react(plotEl, plotEl.data, plotEl.layout);
 
                 // Persist user selection
                 try {{
