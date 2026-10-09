@@ -1,0 +1,4 @@
+{
+  "_comment": "Rename this file to config.json and set model_path if you want to store your local embedding model on a custom disk (e.g. D: or E:)",
+  "model_path": ""
+}

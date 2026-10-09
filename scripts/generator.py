@@ -18,10 +18,61 @@ try:
 except ImportError:
     from .themes import get_theme, THEMES
 
+def resolve_model_dir(explicit_path=None):
+    """
+    Resolve embedding model directory through a 5-tier fallback cascade:
+    1. Explicit path passed via CLI/code (--model)
+    2. Environment variable: KNOWLEDGE_MAP_MODEL_DIR or EMBEDDING_MODEL_DIR
+    3. Local private config file: config.json in skill root directory
+    4. Relative portable models directory: <skill_root>/models/jina-embeddings-v2-base-zh
+    5. User cache directory: ~/.cache/obsidian-knowledge-map/models/jina-embeddings-v2-base-zh
+    """
+    skill_root = Path(__file__).resolve().parent.parent
+
+    # 1. Explicit argument
+    if explicit_path:
+        p = Path(explicit_path)
+        if p.exists():
+            return p
+        raise FileNotFoundError(f"指定的嵌入模型路径不存在: {explicit_path}")
+
+    # 2. Environment variable
+    env_path = os.environ.get("KNOWLEDGE_MAP_MODEL_DIR") or os.environ.get("EMBEDDING_MODEL_DIR")
+    if env_path:
+        p = Path(env_path)
+        if p.exists():
+            return p
+
+    # 3. Local config.json (git-ignored private configuration)
+    config_file = skill_root / "config.json"
+    if config_file.exists():
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                configured_path = cfg.get("model_path")
+                if configured_path:
+                    p = Path(configured_path)
+                    if p.exists():
+                        return p
+        except Exception:
+            pass
+
+    # 4. Skill local models/ directory (portable mode)
+    local_model = skill_root / "models" / "jina-embeddings-v2-base-zh"
+    if local_model.exists():
+        return local_model
+
+    # 5. User cache directory
+    user_cache = Path.home() / ".cache" / "obsidian-knowledge-map" / "models" / "jina-embeddings-v2-base-zh"
+    if user_cache.exists():
+        return user_cache
+
+    return None
+
 class MapGenerator:
-    def __init__(self, vault_path, model_dir, output_dir, style='davinci'):
+    def __init__(self, vault_path, model_dir=None, output_dir=None, style='davinci'):
         self.vault_path = Path(vault_path) if vault_path else Path(".")
-        self.model_dir = Path(model_dir) if model_dir else None
+        self.model_dir = resolve_model_dir(model_dir)
         self.output_dir = Path(output_dir) if output_dir else Path(".")
         self.style = style
         os.makedirs(self.output_dir, exist_ok=True)
@@ -31,14 +82,36 @@ class MapGenerator:
 
     def _init_session(self):
         if self.model_dir is None:
-            raise ValueError("model_dir is required for encoding/analysis.")
+            raise FileNotFoundError(
+                "未找到嵌入模型 (Embedding Model)！\n"
+                "你可以通过以下任意方式指定或配置模型：\n"
+                "  1. 命令行参数：--model <模型目录>\n"
+                "  2. 环境变量：设置 KNOWLEDGE_MAP_MODEL_DIR=<模型目录>\n"
+                "  3. 配置文件：在 Skill 根目录下创建 config.json，写入 {\"model_path\": \"<模型目录>\"}\n"
+                "  4. 自动下载：运行 python scripts/setup_model.py 自动将模型拉取至本地"
+            )
         from tokenizers import Tokenizer
         if self.tokenizer is None:
-            self.tokenizer = Tokenizer.from_file(str(self.model_dir / "tokenizer.json"))
+            tok_path = self.model_dir / "tokenizer.json"
+            if not tok_path.exists():
+                raise FileNotFoundError(f"在 {self.model_dir} 中未找到 tokenizer.json")
+            self.tokenizer = Tokenizer.from_file(str(tok_path))
             self.tokenizer.enable_padding(direction='right', pad_id=1, pad_type_id=0, pad_token='<pad>')
             self.tokenizer.enable_truncation(max_length=1024)
         
-        self.onnx_path = str(self.model_dir / "onnx/model_quantized.onnx")
+        onnx_candidates = [
+            self.model_dir / "onnx" / "model_quantized.onnx",
+            self.model_dir / "model_quantized.onnx",
+            self.model_dir / "onnx" / "model_int8.onnx",
+            self.model_dir / "model_int8.onnx",
+            self.model_dir / "onnx" / "model.onnx",
+            self.model_dir / "model.onnx",
+        ]
+        onnx_file = next((p for p in onnx_candidates if p.exists()), None)
+        if not onnx_file:
+            raise FileNotFoundError(f"在 {self.model_dir} 中未找到 ONNX 模型文件 (model_quantized.onnx 或 model.onnx)")
+        self.onnx_path = str(onnx_file)
+        
         import onnxruntime as ort
         import gc
         if self.session is not None:
@@ -267,9 +340,12 @@ class MapGenerator:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=['analyze', 'render'])
-    parser.add_argument("--vault"); parser.add_argument("--model"); parser.add_argument("--output")
-    parser.add_argument("--style", default='davinci'); parser.add_argument("--themes")
+    parser.add_argument("--mode", choices=['analyze', 'render'], required=True)
+    parser.add_argument("--vault", default=".")
+    parser.add_argument("--model", default=None, help="Embedding model directory (optional, auto-detected from config.json or env)")
+    parser.add_argument("--output", default=".")
+    parser.add_argument("--style", default='davinci')
+    parser.add_argument("--themes")
     args = parser.parse_args()
     
     gen = MapGenerator(args.vault, args.model, args.output, args.style)

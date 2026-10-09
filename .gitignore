@@ -5,3 +5,8 @@ themes.json
 knowledge_map.png
 *.pyc
 .DS_Store
+
+# Local private configurations and model weights
+config.json
+models/
+*.onnx

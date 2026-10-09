@@ -1,6 +1,6 @@
 ---
 name: obsidian-knowledge-map
-version: 2.1
+version: 2.2
 description: 根据 Obsidian 笔记库内容，使用本地或在线获取的 ONNX 嵌入模型生成具有 AI 语义分类功能的知识地图（PNG/HTML）。触发词包括“生成知识地图”、“Knowledge Map”、“绘制笔记地形图”。
 ---
 
@@ -10,12 +10,18 @@ description: 根据 Obsidian 笔记库内容，使用本地或在线获取的 ON
 
 ## 环境定位 (Context Awareness)
 - **脚本探测**：Agent 应优先通过 `glob("**/obsidian-knowledge-map/scripts/generator.py")` 确定脚本位置。
-- **模型溯源策略**：
-  1. **探测**：检查会话历史或常用路径（如 `E:\HF-Models`）是否存在模型。
-  2. **询问**：若未找到，询问用户本地路径。
-  3. **引导下载**：若用户表示没有模型，**提供以下指令**供其下载：
-     `git clone https://huggingface.co/jinaai/jina-embeddings-v2-base-zh`
-     （提醒用户下载后需通过脚本或手动转换为 ONNX 格式，或指向已包含 ONNX 的目录）。
+- **模型探测与自适配策略**：
+  1. **零配置自动探测**：脚本按优先级自动寻找嵌入模型：
+     - 命令行参数 `--model <path>`
+     - 环境变量 `KNOWLEDGE_MAP_MODEL_DIR`
+     - 本地私有配置文件 `config.json`（参考 `config.example.json`）
+     - 技能内置便携目录 `<SKILL_DIR>/models/jina-embeddings-v2-base-zh`
+     - 系统缓存目录 `~/.cache/obsidian-knowledge-map/models/jina-embeddings-v2-base-zh`
+  2. **一键自动下载**：若本地无可用模型，执行配套脚本从镜像站极速拉取量化文件：
+     ```powershell
+     python "{SKILL_DIR}\scripts\setup_model.py"
+     ```
+     （如需指定到其他非系统盘存放，可追加参数：`--target-dir "D:\Models\jina-embeddings-v2-base-zh"`）。
 
 ## 核心流程
 
@@ -23,16 +29,18 @@ description: 根据 Obsidian 笔记库内容，使用本地或在线获取的 ON
 在启动前，必须验证依赖：
 1. **依赖检查**：执行 `python -c "import onnxruntime, umap, tokenizers, matplotlib, scipy, numpy, yaml, plotly"`。
 2. **主动修复**：若报错，提供安装指令：`pip install onnxruntime umap-learn tokenizers matplotlib scipy numpy PyYAML plotly`。
-3. **模型完整性**：确认所选路径包含 `tokenizer.json` 及 `onnx/model_quantized.onnx`。
+3. **模型检查**：若未配置过模型，建议先执行 `python "{SKILL_DIR}\scripts\setup_model.py"` 或在 `config.json` 中配置现有路径。
 
 ### 1. 初始化与参数确认
-通过 `ask_user` 获取必要路径参数：`vault_path`, `model_path`, `output_dir`。
-> 💡 **风格选择优化**：生成的交互式 HTML 页面右上角已**原生内置实时风格切换下拉菜单**（支持宋代山水、工程蓝图、深空星云、瑞士极简、和纸若竹、达芬奇手稿、现代极夜 7 大风格瞬时无缝切换），**无需在生成前向用户提问风格**！默认以 `shanshui`（或用户显式要求的风格）作为初始视图直接全量生成。
+确认目标笔记库路径 `vault_path` 及导出目录 `output_dir`。
+> 💡 **参数与交互优化**：
+> 1. **模型免输**：若本地已配置 `config.json` 或环境变量，**无需重复向用户询问模型路径**，直接调用即可。
+> 2. **风格预选免问**：生成的交互式 HTML 页面右上角已**原生内置实时风格切换下拉菜单**（支持宋代山水、工程蓝图、深空星云、瑞士极简、和纸若竹、达芬奇手稿、现代极夜 7 大风格瞬时无缝切换），**无需在生成前向用户提问风格**！默认以 `shanshui` 作为初始视图全量生成。
 
 ### 2. 空间分析阶段 (Phase 1)
 执行降维与聚类：
 ```powershell
-python "{SCRIPT_PATH}" --mode analyze --vault "{vault_path}" --model "{model_path}" --output "{output_dir}" --style "{style}"
+python "{SCRIPT_PATH}" --mode analyze --vault "{vault_path}" --output "{output_dir}" --style "{style}"
 ```
 **关键检查点**：确认生成了 `map_state.json`。
 
@@ -43,7 +51,7 @@ python "{SCRIPT_PATH}" --mode analyze --vault "{vault_path}" --model "{model_pat
 ### 4. 艺术渲染阶段 (Phase 3)
 执行绘图 (PNG)：
 ```powershell
-python "{SCRIPT_PATH}" --mode render --vault "{vault_path}" --model "{model_path}" --output "{output_dir}" --style "{style}" --themes '{themes_json}'
+python "{SCRIPT_PATH}" --mode render --vault "{vault_path}" --output "{output_dir}" --style "{style}" --themes '{themes_json}'
 ```
 **渲染后自检 (Accessibility & Craft Audit)**：
 - **风格自洽**：字体、徽标、底色与散点色盘是否与所选 style 高度契合。
@@ -59,9 +67,8 @@ python "{SKILL_DIR}\scripts\html_generator.py" --output "{output_dir}" --vault_n
 ## 故障排除 (Troubleshooting)
 - **内存不足**：若 Python 进程被 kill，建议用户关闭其他占用内存的程序后再试。
 - **路径包含中文**：在 Windows PowerShell 中，变量传参时请确保使用双引号包裹。
-- **模型格式错误**：若提示找不到 ONNX 文件，请确认路径指向的是包含 `onnx/` 子目录的 snapshots 目录。
+- **模型格式错误**：若提示找不到 ONNX 文件，请确认路径指向包含 `tokenizer.json` 及 `model_quantized.onnx`（或子目录 `onnx/`）的文件夹。
 
 ## 注意事项
 - **HTML 联动**：HTML 地图支持点击节点通过 `obsidian://` 协议直接打开笔记。
 - **设计标准**：全面接入 `huashu-design` 规范与反 AI slop 调色逻辑，杜绝默认 tab20 色盘。
-
