@@ -1,16 +1,48 @@
 import os
+import sys
 import re
 import yaml
 import json
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 from pathlib import Path
-from scipy.stats import gaussian_kde
-from scipy.ndimage import maximum_filter
-from scipy.spatial.distance import cdist
-import sys
 import argparse
+
+# 1. Console Encoding Safety: prevent Windows GBK console crashes on unicode symbols
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
+# 2. Windows MSVC Runtime Resolution: prioritize modern C++ runtime over outdated System32 binaries
+if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
+    msvc_candidates = [
+        r"C:\Program Files\Microsoft Office\root\Office16",
+        r"C:\Program Files\Common Files\microsoft shared\ClickToRun",
+        r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Redist\MSVC",
+        r"C:\Program Files (x86)\Microsoft Visual Studio\Shared\14.0\VC",
+    ]
+    for d in msvc_candidates:
+        if os.path.exists(os.path.join(d, "msvcp140.dll")):
+            try:
+                os.add_dll_directory(d)
+                break
+            except Exception:
+                pass
+
+# 3. CRITICAL: Load ONNX Runtime and Tokenizers BEFORE scipy/OpenBLAS to prevent Windows threading conflicts
+try:
+    import onnxruntime as ort
+except ImportError:
+    ort = None
+
+try:
+    import tokenizers
+    from tokenizers import Tokenizer
+except ImportError:
+    tokenizers = None
+    Tokenizer = None
+
+# 4. Scientific & visualization libraries
+import numpy as np
 
 # Import Theme Design System
 try:
@@ -62,10 +94,36 @@ def resolve_model_dir(explicit_path=None):
     if local_model.exists():
         return local_model
 
-    # 5. User cache directory
-    user_cache = Path.home() / ".cache" / "obsidian-knowledge-map" / "models" / "jina-embeddings-v2-base-zh"
-    if user_cache.exists():
-        return user_cache
+    # 5. JIT Auto-Download (Agent Autonomous Execution)
+    print("\n[i] 未检测到本地嵌入模型，正在自动触发极速就绪机制...")
+    try:
+        from setup_model import setup_model, get_smart_default_dir
+    except ImportError:
+        try:
+            from .setup_model import setup_model, get_smart_default_dir
+        except ImportError:
+            setup_model = None
+            get_smart_default_dir = None
+            
+    if setup_model:
+        ok = setup_model()
+        if ok:
+            # 优先从刚保存的 config.json 读取
+            if config_file.exists():
+                try:
+                    with open(config_file, "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                        configured_path = cfg.get("model_path")
+                        if configured_path and Path(configured_path).exists():
+                            return Path(configured_path)
+                except Exception:
+                    pass
+            if local_model.exists():
+                return local_model
+            if get_smart_default_dir:
+                smart_p = get_smart_default_dir()
+                if smart_p.exists():
+                    return smart_p
 
     return None
 
@@ -166,7 +224,7 @@ class MapGenerator:
             if batch_idx % 10 == 0 or batch_idx == 1 or batch_idx == total:
                 print(f"  Progress: Batch {batch_idx}/{total}...")
             
-            # Auto-recycling to prevent memory leaks
+            # Auto-recycling to prevent memory leaks on large vaults
             if batch_idx % 50 == 0:
                 self._init_session()
                 
@@ -183,8 +241,58 @@ class MapGenerator:
             all_embs.append(emb)
         return np.vstack(all_embs)
 
+    def reduce_dimension_2d(self, embs, num_notes):
+        """
+        Robust 2D manifold projection with multi-engine fallback:
+        1. UMAP (topological manifold)
+        2. t-SNE (sklearn, precompiled wheel, non-linear)
+        3. PCA (sklearn, linear)
+        4. Pure NumPy SVD (zero external dependency, 100% fail-safe)
+        """
+        # 1. Try UMAP
+        try:
+            import umap
+            n_neighbors = int(np.clip(np.sqrt(num_notes) * 2, 15, 100))
+            min_dist = 0.1 if num_notes < 500 else 0.05
+            reducer = umap.UMAP(n_components=2, metric='cosine', n_neighbors=n_neighbors, min_dist=min_dist, random_state=42)
+            coords = reducer.fit_transform(embs)
+            print("[OK] 已使用 UMAP 拓扑流形引擎完成降维")
+            return coords
+        except Exception as e:
+            print(f"[i] UMAP 不可用 ({e})，正在自动切换至备用降维引擎...")
+
+        # 2. Try scikit-learn t-SNE
+        if num_notes >= 4:
+            try:
+                from sklearn.manifold import TSNE
+                perplexity = min(30, max(2, num_notes // 3))
+                coords = TSNE(n_components=2, metric='cosine', perplexity=perplexity, random_state=42).fit_transform(embs)
+                print("[OK] 已使用 t-SNE 引擎完成降维")
+                return coords
+            except Exception:
+                pass
+
+        # 3. Try scikit-learn PCA
+        try:
+            from sklearn.decomposition import PCA
+            coords = PCA(n_components=2, random_state=42).fit_transform(embs)
+            print("[OK] 已使用 PCA 引擎完成降维")
+            return coords
+        except Exception:
+            pass
+
+        # 4. Pure NumPy SVD fallback (guaranteed to work everywhere numpy exists!)
+        embs_centered = embs - np.mean(embs, axis=0)
+        u, s, vt = np.linalg.svd(embs_centered, full_matrices=False)
+        coords = u[:, :2] * s[:2]
+        print("[OK] 已使用内置 SVD 引擎完成降维")
+        return coords
+
     def analyze_geography(self):
-        import umap
+        from scipy.stats import gaussian_kde
+        from scipy.ndimage import maximum_filter
+        from scipy.spatial.distance import cdist
+
         emb_cache = self.output_dir / "embeddings.npy"
         coord_cache = self.output_dir / "coords.npy"
         notes = self.scan_notes()
@@ -199,11 +307,7 @@ class MapGenerator:
         if coord_cache.exists():
             coords = np.load(coord_cache)
         else:
-            # Adaptive UMAP Parameters
-            n_neighbors = int(np.clip(np.sqrt(num_notes) * 2, 15, 100))
-            min_dist = 0.1 if num_notes < 500 else 0.05
-            reducer = umap.UMAP(n_components=2, metric='cosine', n_neighbors=n_neighbors, min_dist=min_dist, random_state=42)
-            coords = reducer.fit_transform(embs)
+            coords = self.reduce_dimension_2d(embs, num_notes)
             coords = (coords - coords.min(axis=0)) / (coords.max(axis=0) - coords.min(axis=0))
             np.save(coord_cache, coords)
         
@@ -226,7 +330,7 @@ class MapGenerator:
         for p in peaks:
             if not any(np.sqrt((p['x']-mp['x'])**2 + (p['y']-mp['y'])**2) < merge_dist for mp in merged):
                 merged.append(p)
-                if len(merged) >= max_p: break
+            if len(merged) >= max_p: break
         
         # Extract cluster neighbors for Agent to summarize
         peak_neighbor_titles = []
@@ -241,6 +345,9 @@ class MapGenerator:
         return peak_neighbor_titles
 
     def render(self, themes):
+        import matplotlib.pyplot as plt
+        import matplotlib.colors as mcolors
+
         os.makedirs(self.output_dir, exist_ok=True)
         with open(self.output_dir / "map_state.json", 'r', encoding='utf-8') as f:
             state = json.load(f)
@@ -273,7 +380,7 @@ class MapGenerator:
         # Universal Categorical Coloring from Style Palette
         folders = [n['folder'] for n in state['notes']]
         unique_f = sorted(list(set(folders)))
-        color_palette = theme.get('scatter_palette', plt.cm.get_cmap('tab20').colors)
+        color_palette = theme.get('scatter_palette', plt.colormaps['tab20'].colors if hasattr(plt, 'colormaps') else plt.cm.get_cmap('tab20').colors)
         palette_len = len(color_palette)
         edge_color = theme.get('scatter_edge_color', 'none')
         
