@@ -49,8 +49,10 @@ def generate_immersive_html(output_dir, vault_name, themes, style='shanshui'):
     fig = go.Figure()
 
     # 2. Immersive Terrain (45 layers) - Trace 0
-    x_range = np.linspace(0, 1, Z.shape[1])
-    y_range = np.linspace(0, 1, Z.shape[0])
+    grid_bounds = state.get('grid_bounds', [-0.15, 1.15])
+    grid_min, grid_max = grid_bounds[0], grid_bounds[1]
+    x_range = np.linspace(grid_min, grid_max, Z.shape[1])
+    y_range = np.linspace(grid_min, grid_max, Z.shape[0])
     fig.add_trace(go.Contour(
         z=Z, x=x_range, y=y_range,
         colorscale=contour_colors,
@@ -135,8 +137,8 @@ def generate_immersive_html(output_dir, vault_name, themes, style='shanshui'):
     fig.update_layout(
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0, 1]),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0, 1]),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[grid_min, grid_max]),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[grid_min, grid_max]),
         showlegend=True,
         legend=dict(
             font=dict(color=ink_color, size=10, family=font_family_web),

@@ -311,10 +311,12 @@ class MapGenerator:
             coords = (coords - coords.min(axis=0)) / (coords.max(axis=0) - coords.min(axis=0))
             np.save(coord_cache, coords)
         
-        # KDE Density estimation
+        # KDE Density estimation on extended organic domain (zero artificial rectangular bounding)
+        grid_pad = 0.15
+        grid_min, grid_max = -grid_pad, 1.0 + grid_pad
         kde = gaussian_kde(coords.T)
-        X, Y = np.meshgrid(np.linspace(0, 1, 300), np.linspace(0, 1, 300))
-        Z = kde(np.vstack([X.ravel(), Y.ravel()])).reshape(300, 300)
+        X, Y = np.meshgrid(np.linspace(grid_min, grid_max, 320), np.linspace(grid_min, grid_max, 320))
+        Z = kde(np.vstack([X.ravel(), Y.ravel()])).reshape(320, 320)
         Z = (Z - Z.min()) / (Z.max() - Z.min())
         
         # Peak Detection
@@ -339,7 +341,13 @@ class MapGenerator:
             nearest = [notes[j]['title'] for j in np.argsort(dists)[:15]]
             peak_neighbor_titles.append(nearest)
             
-        state = {'notes': notes, 'coords': coords.tolist(), 'Z': Z.tolist(), 'peaks': merged}
+        state = {
+            'notes': notes, 
+            'coords': coords.tolist(), 
+            'Z': Z.tolist(), 
+            'peaks': merged,
+            'grid_bounds': [grid_min, grid_max]
+        }
         with open(self.output_dir / "map_state.json", 'w', encoding='utf-8') as f:
             json.dump(state, f, ensure_ascii=False)
         return peak_neighbor_titles
@@ -353,7 +361,9 @@ class MapGenerator:
             state = json.load(f)
         Z = np.array(state['Z'])
         coords = np.array(state['coords'])
-        X, Y = np.meshgrid(np.linspace(0, 1, 300), np.linspace(0, 1, 300))
+        grid_bounds = state.get('grid_bounds', [-0.15, 1.15])
+        grid_min, grid_max = grid_bounds[0], grid_bounds[1]
+        X, Y = np.meshgrid(np.linspace(grid_min, grid_max, Z.shape[1]), np.linspace(grid_min, grid_max, Z.shape[0]))
         
         theme = self.theme
         paper_color = theme['bg_color']
@@ -375,10 +385,10 @@ class MapGenerator:
             cmap_colors = [paper_color] + list(cmap_colors[1:])
         cmap = mcolors.LinearSegmentedColormap.from_list(self.style, cmap_colors)
         
-        # 2. Contour levels starting from 0.03 so flat low-density plains seamlessly reveal the natural paper
+        # 2. Contour levels starting from 0.015 so outer ripples seamlessly fade into the paper
         num_levels = theme.get('contour_levels', 22)
-        levels = np.linspace(0.03, 1.0, num_levels)
-        ax.contourf(X, Y, Z, levels=levels, cmap=cmap, alpha=theme.get('contour_alpha', 0.75), extend='max')
+        levels = np.linspace(0.015, 1.0, num_levels)
+        ax.contourf(X, Y, Z, levels=levels, cmap=cmap, alpha=theme.get('contour_alpha', 0.65), extend='max')
         ax.contour(X, Y, Z, levels=levels, colors=ink_color, 
                    linewidths=theme.get('contour_line_width', 0.45), 
                    alpha=theme.get('contour_line_alpha', 0.28))
@@ -470,8 +480,8 @@ class MapGenerator:
         leg = ax.legend(loc='lower left', frameon=True, facecolor=paper_color, edgecolor=secondary_color, fontsize=8, ncol=2 if len(unique_f)>10 else 1)
         plt.setp(leg.get_texts(), color=ink_color)
         ax.axis('off')
-        ax.set_xlim(-0.02, 1.02)
-        ax.set_ylim(-0.02, 1.02)
+        ax.set_xlim(grid_min, grid_max)
+        ax.set_ylim(grid_min, grid_max)
         
         # Pure borderless full-bleed layout: completely free of any outer frames, boxes, or lines
         plt.subplots_adjust(left=0.02, right=0.98, bottom=0.02, top=0.93)
