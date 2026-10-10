@@ -392,7 +392,7 @@ class MapGenerator:
                            c=[c], alpha=0.75, label=f, 
                            edgecolors=edge_color, linewidths=0.3)
         
-        # Peak Annotations with Badge Style
+        # Peak Annotations with Centripetal Smart Offset (Zero Edge Clipping)
         markers = theme.get('peak_markers', ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'])
         badge_type = theme.get('peak_badge_type', 'circle')
         
@@ -400,48 +400,76 @@ class MapGenerator:
             marker = markers[i % len(markers)]
             px, py = p['x'], p['y']
             
+            # Smart Centripetal Placement: avoid clipping at canvas edges
+            # If peak is on the right half (px > 0.60), place label to the LEFT of the marker
+            # If peak is on the left half (px <= 0.60), place label to the RIGHT of the marker
+            is_right = px > 0.60
+            ha_text = 'right' if is_right else 'left'
+            dx_text = -0.035 if is_right else 0.035
+            
+            # Vertical safety: if peak is near top or bottom edge, shift inward
+            if py > 0.82:
+                va_text = 'top'
+                dy_text = -0.015
+            elif py < 0.18:
+                va_text = 'bottom'
+                dy_text = 0.015
+            else:
+                va_text = 'center'
+                dy_text = 0.005
+                
+            lx = px + dx_text
+            ly = py + dy_text
+            
             if badge_type == 'stamp':
                 ax.text(px, py, marker, ha='center', va='center', color=accent_color, fontweight='bold', fontsize=10,
                         bbox=dict(boxstyle='square,pad=0.25', facecolor=paper_color, edgecolor=accent_color, linewidth=1.2, alpha=0.9))
-                ax.text(px+0.035, py+0.01, t, color=ink_color, fontsize=10, fontweight='bold',
+                ax.text(lx, ly, t, ha=ha_text, va=va_text, color=ink_color, fontsize=10, fontweight='bold',
                         bbox=dict(boxstyle='round,pad=0.25', facecolor=paper_color, edgecolor=secondary_color, alpha=0.8, linewidth=0.6))
             elif badge_type == 'crosshair':
                 ax.plot([px-0.018, px+0.018], [py, py], color=accent_color, linewidth=0.8, alpha=0.85)
                 ax.plot([px, px], [py-0.018, py+0.018], color=accent_color, linewidth=0.8, alpha=0.85)
                 ax.add_artist(plt.Circle((px, py), 0.016, color=accent_color, fill=False, linewidth=0.8, alpha=0.7))
-                ax.text(px+0.025, py+0.012, f"[{marker}] {t}", color=ink_color, fontsize=9, fontfamily='monospace',
+                ax.text(lx, ly, f"[{marker}] {t}", ha=ha_text, va=va_text, color=ink_color, fontsize=9, fontfamily='monospace',
                         bbox=dict(boxstyle='square,pad=0.25', facecolor=paper_color, edgecolor=accent_color, alpha=0.85, linewidth=0.8))
             elif badge_type == 'star':
                 ax.plot(px, py, marker='*', markersize=13, color=accent_color, markeredgecolor='white', markeredgewidth=0.4)
-                ax.text(px+0.03, py+0.01, f"{marker} · {t}", color=ink_color, fontsize=9,
+                ax.text(lx, ly, f"{marker} · {t}", ha=ha_text, va=va_text, color=ink_color, fontsize=9,
                         bbox=dict(boxstyle='round,pad=0.25', facecolor=paper_color, edgecolor=secondary_color, alpha=0.75, linewidth=0.6))
             elif badge_type == 'swiss_box':
                 ax.text(px, py, marker, ha='center', va='center', color='white', fontweight='heavy', fontsize=9,
                         bbox=dict(boxstyle='square,pad=0.3', facecolor=accent_color, edgecolor='none', alpha=1.0))
-                ax.text(px+0.032, py+0.01, t.upper(), color=ink_color, fontsize=10, fontweight='bold',
+                ax.text(lx, ly, t.upper(), ha=ha_text, va=va_text, color=ink_color, fontsize=10, fontweight='bold',
                         bbox=dict(boxstyle='square,pad=0.25', facecolor=paper_color, edgecolor=ink_color, linewidth=1.0, alpha=0.9))
             elif badge_type == 'zen_circle':
                 ax.add_artist(plt.Circle((px, py), 0.018, color=ink_color, fill=False, linewidth=1.0, alpha=0.75))
                 ax.text(px, py, marker, ha='center', va='center', color=ink_color, fontsize=9, fontweight='bold')
-                ax.text(px+0.032, py+0.01, t, color=ink_color, fontsize=10,
+                ax.text(lx, ly, t, ha=ha_text, va=va_text, color=ink_color, fontsize=10,
                         bbox=dict(boxstyle='round,pad=0.3', facecolor=paper_color, edgecolor=secondary_color, alpha=0.75, linewidth=0.6))
             else:
                 ax.add_artist(plt.Circle((px, py), 0.02, color=ink_color, fill=False, alpha=0.8))
                 ax.text(px, py, marker, ha='center', va='center', color=ink_color, fontweight='bold')
-                ax.text(px+0.03, py+0.01, t, color=ink_color, fontsize=10, 
+                ax.text(lx, ly, t, ha=ha_text, va=va_text, color=ink_color, fontsize=10, 
                         bbox=dict(boxstyle='round,pad=0.3', facecolor=paper_color, edgecolor=ink_color, alpha=0.6))
         
         vault_name = self.vault_path.name if self.vault_path and self.vault_path.name else "VAULT"
         main_title = theme.get('brand_title_format', 'OBSIDIAN KNOWLEDGE MAP').format(vault_name=vault_name)
         subtitle = theme.get('brand_subtitle', '')
         
-        ax.set_title(f"{main_title}\n{subtitle}" if subtitle else main_title, 
-                     fontsize=24, color=ink_color, pad=35, fontweight='bold')
+        # Mathematically Centered Title (using figure coordinates for exact 0.5 horizontal midpoint)
+        fig.text(0.5, 0.965, main_title, ha='center', va='top', fontsize=24, color=ink_color, fontweight='bold')
+        if subtitle:
+            fig.text(0.5, 0.932, subtitle, ha='center', va='top', fontsize=12, color=ink_color, alpha=0.85)
         
         leg = ax.legend(loc='lower left', frameon=True, facecolor=paper_color, edgecolor=secondary_color, fontsize=8, ncol=2 if len(unique_f)>10 else 1)
         plt.setp(leg.get_texts(), color=ink_color)
         ax.axis('off')
-        plt.tight_layout()
+        ax.set_xlim(-0.02, 1.02)
+        ax.set_ylim(-0.02, 1.02)
+        
+        # Symmetrical fixed canvas layout: ensures map square is mathematically centered horizontally
+        plt.subplots_adjust(left=0.06, right=0.94, bottom=0.06, top=0.90)
+        
         plt.savefig(self.output_dir / "knowledge_map.png")
         plt.close()
 
