@@ -446,7 +446,7 @@ class MapGenerator:
                 ax.plot([px-0.018, px+0.018], [py, py], color=accent_color, linewidth=0.8, alpha=0.85)
                 ax.plot([px, px], [py-0.018, py+0.018], color=accent_color, linewidth=0.8, alpha=0.85)
                 ax.add_artist(plt.Circle((px, py), 0.016, color=accent_color, fill=False, linewidth=0.8, alpha=0.7))
-                ax.text(lx, ly, f"[{marker}] {t}", ha=ha_text, va=va_text, color=ink_color, fontsize=9, fontfamily='monospace',
+                ax.text(lx, ly, f"[{marker}] {t}", ha=ha_text, va=va_text, color=ink_color, fontsize=9,
                         bbox=dict(boxstyle='square,pad=0.25', facecolor=paper_color, edgecolor=accent_color, alpha=0.85, linewidth=0.8))
             elif badge_type == 'star':
                 ax.plot(px, py, marker='*', markersize=13, color=accent_color, markeredgecolor='white', markeredgewidth=0.4)
