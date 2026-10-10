@@ -458,10 +458,6 @@ class MapGenerator:
                 ax.text(lx, ly, t, ha=ha_text, va=va_text, color=ink_color, fontsize=10, fontweight='bold',
                         bbox=dict(boxstyle='round,pad=0.25', facecolor=paper_color, edgecolor=secondary_color, alpha=0.85, linewidth=0.6))
         
-        # Elegant classical cartographic neatline along map edge (subtle and refined)
-        ax.plot([0, 1, 1, 0, 0], [0, 0, 1, 1, 0], color=secondary_color, linewidth=0.75, alpha=0.45)
-        ax.plot([-0.007, 1.007, 1.007, -0.007, -0.007], [-0.007, -0.007, 1.007, 1.007, -0.007], color=secondary_color, linewidth=0.35, alpha=0.25)
-        
         vault_name = self.vault_path.name if self.vault_path and self.vault_path.name else "VAULT"
         main_title = theme.get('brand_title_format', 'OBSIDIAN KNOWLEDGE MAP').format(vault_name=vault_name)
         subtitle = theme.get('brand_subtitle', '')
@@ -474,11 +470,11 @@ class MapGenerator:
         leg = ax.legend(loc='lower left', frameon=True, facecolor=paper_color, edgecolor=secondary_color, fontsize=8, ncol=2 if len(unique_f)>10 else 1)
         plt.setp(leg.get_texts(), color=ink_color)
         ax.axis('off')
-        ax.set_xlim(-0.015, 1.015)
-        ax.set_ylim(-0.015, 1.015)
+        ax.set_xlim(-0.02, 1.02)
+        ax.set_ylim(-0.02, 1.02)
         
-        # Full-bleed compact margin: map fills ~95% of canvas, eliminating bulky outer borders
-        plt.subplots_adjust(left=0.025, right=0.975, bottom=0.025, top=0.93)
+        # Pure borderless full-bleed layout: completely free of any outer frames, boxes, or lines
+        plt.subplots_adjust(left=0.02, right=0.98, bottom=0.02, top=0.93)
         
         plt.savefig(self.output_dir / "knowledge_map.png")
         plt.close()
