@@ -369,13 +369,19 @@ class MapGenerator:
         fig.patch.set_facecolor(paper_color)
         ax.set_facecolor(paper_color)
         
-        cmap = mcolors.LinearSegmentedColormap.from_list(self.style, theme['cmap_colors'])
+        # 1. Seamless colormap: smoothly blends into background paper color
+        cmap_colors = theme.get('cmap_colors', [])
+        if cmap_colors and cmap_colors[0].lower() != paper_color.lower():
+            cmap_colors = [paper_color] + list(cmap_colors[1:])
+        cmap = mcolors.LinearSegmentedColormap.from_list(self.style, cmap_colors)
         
-        levels = theme.get('contour_levels', 20)
-        ax.contourf(X, Y, Z, levels=levels, cmap=cmap, alpha=theme.get('contour_alpha', 0.6))
+        # 2. Contour levels starting from 0.03 so flat low-density plains seamlessly reveal the natural paper
+        num_levels = theme.get('contour_levels', 22)
+        levels = np.linspace(0.03, 1.0, num_levels)
+        ax.contourf(X, Y, Z, levels=levels, cmap=cmap, alpha=theme.get('contour_alpha', 0.75), extend='max')
         ax.contour(X, Y, Z, levels=levels, colors=ink_color, 
-                   linewidths=theme.get('contour_line_width', 0.5), 
-                   alpha=theme.get('contour_line_alpha', 0.3))
+                   linewidths=theme.get('contour_line_width', 0.45), 
+                   alpha=theme.get('contour_line_alpha', 0.28))
         
         # Universal Categorical Coloring from Style Palette
         folders = [n['folder'] for n in state['notes']]
@@ -388,9 +394,9 @@ class MapGenerator:
             m = np.array([n == f for n in folders])
             if any(m):
                 c = color_palette[i % palette_len]
-                ax.scatter(coords[m, 0], coords[m, 1], s=22, 
-                           c=[c], alpha=0.75, label=f, 
-                           edgecolors=edge_color, linewidths=0.3)
+                ax.scatter(coords[m, 0], coords[m, 1], s=20, 
+                           c=[c], alpha=0.8, label=f, 
+                           edgecolors='none')
         
         # Peak Annotations with Centripetal Smart Offset (Zero Edge Clipping)
         markers = theme.get('peak_markers', ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'])
@@ -447,28 +453,32 @@ class MapGenerator:
                 ax.text(lx, ly, t, ha=ha_text, va=va_text, color=ink_color, fontsize=10,
                         bbox=dict(boxstyle='round,pad=0.3', facecolor=paper_color, edgecolor=secondary_color, alpha=0.75, linewidth=0.6))
             else:
-                ax.add_artist(plt.Circle((px, py), 0.02, color=ink_color, fill=False, alpha=0.8))
-                ax.text(px, py, marker, ha='center', va='center', color=ink_color, fontweight='bold')
-                ax.text(lx, ly, t, ha=ha_text, va=va_text, color=ink_color, fontsize=10, 
-                        bbox=dict(boxstyle='round,pad=0.3', facecolor=paper_color, edgecolor=ink_color, alpha=0.6))
+                ax.add_artist(plt.Circle((px, py), 0.018, color=ink_color, fill=False, alpha=0.85, linewidth=1.0))
+                ax.text(px, py, marker, ha='center', va='center', color=ink_color, fontweight='bold', fontsize=9)
+                ax.text(lx, ly, t, ha=ha_text, va=va_text, color=ink_color, fontsize=10, fontweight='bold',
+                        bbox=dict(boxstyle='round,pad=0.25', facecolor=paper_color, edgecolor=secondary_color, alpha=0.85, linewidth=0.6))
+        
+        # Elegant classical cartographic neatline along map edge (subtle and refined)
+        ax.plot([0, 1, 1, 0, 0], [0, 0, 1, 1, 0], color=secondary_color, linewidth=0.75, alpha=0.45)
+        ax.plot([-0.007, 1.007, 1.007, -0.007, -0.007], [-0.007, -0.007, 1.007, 1.007, -0.007], color=secondary_color, linewidth=0.35, alpha=0.25)
         
         vault_name = self.vault_path.name if self.vault_path and self.vault_path.name else "VAULT"
         main_title = theme.get('brand_title_format', 'OBSIDIAN KNOWLEDGE MAP').format(vault_name=vault_name)
         subtitle = theme.get('brand_subtitle', '')
         
         # Mathematically Centered Title (using figure coordinates for exact 0.5 horizontal midpoint)
-        fig.text(0.5, 0.965, main_title, ha='center', va='top', fontsize=24, color=ink_color, fontweight='bold')
+        fig.text(0.5, 0.972, main_title, ha='center', va='top', fontsize=22, color=ink_color, fontweight='bold')
         if subtitle:
-            fig.text(0.5, 0.932, subtitle, ha='center', va='top', fontsize=12, color=ink_color, alpha=0.85)
+            fig.text(0.5, 0.944, subtitle, ha='center', va='top', fontsize=11, color=ink_color, alpha=0.8)
         
         leg = ax.legend(loc='lower left', frameon=True, facecolor=paper_color, edgecolor=secondary_color, fontsize=8, ncol=2 if len(unique_f)>10 else 1)
         plt.setp(leg.get_texts(), color=ink_color)
         ax.axis('off')
-        ax.set_xlim(-0.02, 1.02)
-        ax.set_ylim(-0.02, 1.02)
+        ax.set_xlim(-0.015, 1.015)
+        ax.set_ylim(-0.015, 1.015)
         
-        # Symmetrical fixed canvas layout: ensures map square is mathematically centered horizontally
-        plt.subplots_adjust(left=0.06, right=0.94, bottom=0.06, top=0.90)
+        # Full-bleed compact margin: map fills ~95% of canvas, eliminating bulky outer borders
+        plt.subplots_adjust(left=0.025, right=0.975, bottom=0.025, top=0.93)
         
         plt.savefig(self.output_dir / "knowledge_map.png")
         plt.close()

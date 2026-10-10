@@ -15,7 +15,7 @@ THEMES = {
         'contour_alpha': 0.6,
         'contour_line_alpha': 0.35,
         'contour_line_width': 0.5,
-        'cmap_colors': ['#d0d0e6', '#e6d096', '#966432'],
+        'cmap_colors': ['#f4ecd8', '#e2d3b3', '#c9a96e', '#8c5828', '#4e342e'],
         'plotly_colorscale': [
             [0.0, 'rgba(244, 236, 216, 0.0)'],
             [0.1, 'rgba(208, 208, 230, 0.25)'],
@@ -97,7 +97,7 @@ THEMES = {
         'contour_alpha': 0.65,
         'contour_line_alpha': 0.35,
         'contour_line_width': 0.45,
-        'cmap_colors': ['#D9E2EC', '#A3C1AD', '#5B8A72', '#235789', '#1C2321'],  # 远水淡青 -> 初树浅绿 -> 叠翠石绿 -> 苍山石青 -> 峰峦焦墨
+        'cmap_colors': ['#ECE7DE', '#A3C1AD', '#5B8A72', '#235789', '#1C2321'],  # 沉静古纸 -> 初树浅绿 -> 叠翠石绿 -> 苍山石青 -> 峰峦焦墨
         'plotly_colorscale': [
             [0.0, 'rgba(236, 231, 222, 0.0)'],
             [0.12, 'rgba(217, 226, 236, 0.3)'],
