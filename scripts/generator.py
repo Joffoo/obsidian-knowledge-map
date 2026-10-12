@@ -3,6 +3,9 @@ import sys
 import re
 import yaml
 import json
+import time
+import urllib.request
+import urllib.error
 from pathlib import Path
 import argparse
 
@@ -49,6 +52,107 @@ try:
     from themes import get_theme, THEMES
 except ImportError:
     from .themes import get_theme, THEMES
+
+def resolve_engine_config(cli_provider=None, cli_api_base=None, cli_api_key=None,
+                          cli_model_name=None, cli_model_dir=None):
+    """
+    Resolve embedding engine (API vs Local) and credentials in order:
+    1. Explicit CLI arguments
+    2. Environment variables
+    3. config.json in skill root
+    4. Auto-detection
+    """
+    skill_root = Path(__file__).resolve().parent.parent
+    config_file = skill_root / "config.json"
+    cfg = {}
+    if config_file.exists():
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            cfg = {}
+
+    api_key = cli_api_key or os.environ.get("EMBEDDING_API_KEY") or os.environ.get("OPENAI_API_KEY") or cfg.get("api_key")
+    api_base = cli_api_base or os.environ.get("EMBEDDING_API_BASE") or os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_API_BASE") or cfg.get("api_base")
+    model_name = cli_model_name or os.environ.get("EMBEDDING_MODEL_NAME") or os.environ.get("EMBEDDING_MODEL") or cfg.get("model_name") or "BAAI/bge-m3"
+
+    local_path = cli_model_dir or os.environ.get("KNOWLEDGE_MAP_MODEL_DIR") or os.environ.get("EMBEDDING_MODEL_DIR") or cfg.get("model_path")
+
+    provider = cli_provider or cfg.get("provider")
+    if not provider or provider == "auto":
+        if api_key and api_base:
+            provider = "api"
+        elif local_path:
+            provider = "local"
+        else:
+            provider = "local"
+
+    return {
+        "provider": provider,
+        "api_base": api_base,
+        "api_key": api_key,
+        "model_name": model_name,
+        "local_path": local_path,
+        "skill_root": skill_root,
+        "config_file": config_file,
+    }
+
+def compute_embeddings_api(texts, api_base, api_key, model_name, batch_size=16):
+    endpoint = f"{api_base.rstrip('/')}/embeddings"
+    all_embs = []
+    total = (len(texts) + batch_size - 1) // batch_size
+
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        batch_idx = i // batch_size + 1
+        if batch_idx % 5 == 0 or batch_idx == 1 or batch_idx == total:
+            print(f"  [API] 处理批次 {batch_idx}/{total} ({len(batch)} 篇笔记)...")
+
+        payload = {
+            "model": model_name,
+            "input": batch
+        }
+        data_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+        }
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        req = urllib.request.Request(endpoint, data=data_bytes, headers=headers, method="POST")
+
+        max_retries = 3
+        resp_data = None
+        for attempt in range(max_retries):
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    resp_data = json.loads(resp.read().decode("utf-8"))
+                    break
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8", errors="replace")
+                if e.code in (429, 500, 502, 503, 504) and attempt < max_retries - 1:
+                    wait_sec = (attempt + 1) * 2
+                    print(f"  [!] HTTP {e.code} 限流/服务端波动，{wait_sec} 秒后重试...")
+                    time.sleep(wait_sec)
+                    continue
+                raise RuntimeError(f"Embedding API 请求失败 (HTTP {e.code}): {err_body}")
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                    continue
+                raise RuntimeError(f"Embedding API 网络连接失败: {e}")
+
+        if not resp_data or "data" not in resp_data:
+            raise RuntimeError(f"API 返回数据格式异常: {resp_data}")
+
+        items = resp_data["data"]
+        items_sorted = sorted(items, key=lambda x: x.get("index", 0))
+        for item in items_sorted:
+            all_embs.append(item["embedding"])
+
+    embs = np.array(all_embs, dtype=np.float32)
+    embs /= np.maximum(np.linalg.norm(embs, axis=1, keepdims=True), 1e-9)
+    return embs
 
 def resolve_model_dir(explicit_path=None):
     """
@@ -128,13 +232,42 @@ def resolve_model_dir(explicit_path=None):
     return None
 
 class MapGenerator:
-    def __init__(self, vault_path, model_dir=None, output_dir=None, style='davinci'):
+    def __init__(self, vault_path, model_dir=None, output_dir=None, style='davinci',
+                 provider=None, api_base=None, api_key=None, model_name=None, force=False):
         self.vault_path = Path(vault_path) if vault_path else Path(".")
-        self.model_dir = resolve_model_dir(model_dir)
         self.output_dir = Path(output_dir) if output_dir else Path(".")
         self.style = style
+        self.force = force
         os.makedirs(self.output_dir, exist_ok=True)
         self.theme = get_theme(style)
+
+        # Resolve engine configuration (API vs Local)
+        self.engine_cfg = resolve_engine_config(
+            cli_provider=provider,
+            cli_api_base=api_base,
+            cli_api_key=api_key,
+            cli_model_name=model_name,
+            cli_model_dir=model_dir
+        )
+        self.provider = self.engine_cfg["provider"]
+        self.api_base = self.engine_cfg["api_base"]
+        self.api_key = self.engine_cfg["api_key"]
+        self.model_name = self.engine_cfg["model_name"]
+
+        if self.provider == 'api':
+            if not self.api_base or not self.api_key:
+                raise ValueError(
+                    "已指定 API 嵌入模式，但缺少 api_base 或 api_key！\n"
+                    "请通过命令行参数 (--api-base, --api-key)、环境变量 (EMBEDDING_API_BASE, EMBEDDING_API_KEY) "
+                    "或在 config.json 中配置。"
+                )
+            self.model_dir = None
+            masked_key = f"{self.api_key[:6]}...{self.api_key[-4:]}" if len(self.api_key) > 10 else "***"
+            print(f"[i] 启用在线 API 嵌入引擎: {self.api_base} (模型: {self.model_name}, Key: {masked_key})")
+        else:
+            self.model_dir = resolve_model_dir(self.engine_cfg["local_path"])
+            print(f"[i] 启用本地离线 ONNX 引擎: {self.model_dir}")
+
         self.tokenizer = None
         self.session = None
 
@@ -215,6 +348,12 @@ class MapGenerator:
         return notes
 
     def encode(self, texts):
+        if self.provider == 'api':
+            return compute_embeddings_api(texts, self.api_base, self.api_key, self.model_name)
+        else:
+            return self._encode_local(texts)
+
+    def _encode_local(self, texts):
         if self.session is None:
             self._init_session()
         all_embs = []
@@ -222,7 +361,7 @@ class MapGenerator:
         for i in range(0, len(texts), 4):
             batch_idx = i // 4 + 1
             if batch_idx % 10 == 0 or batch_idx == 1 or batch_idx == total:
-                print(f"  Progress: Batch {batch_idx}/{total}...")
+                print(f"  Progress: Batch {batch_idx}/{total} (Local ONNX)...")
             
             # Auto-recycling to prevent memory leaks on large vaults
             if batch_idx % 50 == 0:
@@ -298,13 +437,15 @@ class MapGenerator:
         notes = self.scan_notes()
         num_notes = len(notes)
         
-        if emb_cache.exists():
+        if emb_cache.exists() and not self.force:
+            print(f"[i] 从缓存载入嵌入向量 ({emb_cache})")
             embs = np.load(emb_cache)
         else:
+            print(f"[i] 开始计算 {num_notes} 篇笔记的语义嵌入向量...")
             embs = self.encode([n['content'] for n in notes])
             np.save(emb_cache, embs)
             
-        if coord_cache.exists():
+        if coord_cache.exists() and not self.force:
             coords = np.load(coord_cache)
         else:
             coords = self.reduce_dimension_2d(embs, num_notes)
@@ -493,13 +634,28 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=['analyze', 'render'], required=True)
     parser.add_argument("--vault", default=".")
-    parser.add_argument("--model", default=None, help="Embedding model directory (optional, auto-detected from config.json or env)")
+    parser.add_argument("--model", default=None, help="Embedding model directory (optional for local mode)")
+    parser.add_argument("--provider", choices=['api', 'local', 'auto'], default=None, help="Embedding engine ('api' or 'local')")
+    parser.add_argument("--api-base", default=None, help="OpenAI-compatible embedding API base URL")
+    parser.add_argument("--api-key", default=None, help="API key for embedding service")
+    parser.add_argument("--model-name", default=None, help="Embedding model name (e.g. BAAI/bge-m3)")
+    parser.add_argument("--force", action="store_true", help="Force re-calculating embeddings instead of loading cache")
     parser.add_argument("--output", default=".")
     parser.add_argument("--style", default='davinci')
     parser.add_argument("--themes")
     args = parser.parse_args()
     
-    gen = MapGenerator(args.vault, args.model, args.output, args.style)
+    gen = MapGenerator(
+        vault_path=args.vault,
+        model_dir=args.model,
+        output_dir=args.output,
+        style=args.style,
+        provider=args.provider,
+        api_base=args.api_base,
+        api_key=args.api_key,
+        model_name=args.model_name,
+        force=args.force
+    )
     if args.mode == 'analyze':
         print(json.dumps(gen.analyze_geography(), ensure_ascii=False))
     elif args.mode == 'render':
